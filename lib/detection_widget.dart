@@ -1,4 +1,6 @@
 import 'dart:typed_data';
+import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,13 +14,11 @@ class DetectionWidget extends StatefulWidget {
 
 class _DetectionWidgetState extends State<DetectionWidget> {
   late CameraController _cameraController;
-  late List<CameraDescription> _cameras;
+  bool _isCameraInitialized = false;
   String _detectionResult = "Waiting for detection...";
-  bool _isDetecting = false;
-  DateTime? _lastDetectionTime;
-
-  // This MethodChannel name must match the Android side.
-  static const MethodChannel _channel = MethodChannel("object_detection");
+  ui.Image? _capturedImage;
+  Timer? _timer;
+  Rect _focusPoint = Rect.zero;
 
   @override
   void initState() {
@@ -27,127 +27,96 @@ class _DetectionWidgetState extends State<DetectionWidget> {
   }
 
   Future<void> _initializeCamera() async {
-    _cameras = await availableCameras();
+    final cameras = await availableCameras();
     _cameraController = CameraController(
-      _cameras[0],
+      cameras[0],
       ResolutionPreset.medium,
       enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
     );
     await _cameraController.initialize();
 
-    // Start streaming images after initialization.
-    _startImageStream();
+    // Disable flashlight explicitly.
+    await _cameraController.setFlashMode(FlashMode.off);
 
     if (!mounted) return;
-    setState(() {});
+    setState(() {
+      _isCameraInitialized = true;
+    });
   }
 
-  void _startImageStream() {
-    _cameraController.startImageStream((CameraImage image) async {
-      debugPrint("Received frame: ${image.width} x ${image.height}");
-
-      // Throttle processing to about one frame per 500ms.
-      if (_isDetecting) return;
-      if (_lastDetectionTime != null &&
-          DateTime.now().difference(_lastDetectionTime!) <
-              const Duration(milliseconds: 500)) {
+  void _startTakingPictures() async {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted || !_isCameraInitialized) {
+        timer.cancel();
         return;
       }
-      _isDetecting = true;
-      _lastDetectionTime = DateTime.now();
-
       try {
-        // Convert the YUV420 image from the camera into NV21 format.
-        final nv21Bytes = convertYUV420toNV21(image);
-        debugPrint("NV21 byte length: ${nv21Bytes.length}");
-
-        // Set a fixed rotation (0, 90, 180, 270). Adjust if your device requires a different value.
-        const int rotation = 0;
-
-        // Invoke the native method.
-        final String result =
-            await _channel.invokeMethod("detectObjectsFromStream", {
-          "bytes": nv21Bytes,
-          "width": image.width,
-          "height": image.height,
-          "rotation": rotation,
-        });
+        final XFile picture = await _cameraController.takePicture();
+        final bytes = await picture.readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
         setState(() {
-          _detectionResult = result;
+          _capturedImage = frame.image;
         });
-      } on PlatformException catch (e) {
-        debugPrint("PlatformException: ${e.message}");
+
+        // Analyze the image to find the darkest part.
+        final ByteData? imageData = await _capturedImage!
+            .toByteData(format: ui.ImageByteFormat.rawRgba);
+        if (imageData == null) {
+          debugPrint("Failed to retrieve image data");
+          return;
+        }
+        final Uint8List pixels = imageData.buffer.asUint8List();
+        int darkestValue = 255;
+        int darkestIndex = 0;
+
+        for (int i = 0; i < pixels.length; i += 4) {
+          final int r = pixels[i];
+          final int g = pixels[i + 1];
+          final int b = pixels[i + 2];
+          final int brightness = (r + g + b) ~/ 3;
+
+          if (brightness < darkestValue) {
+            darkestValue = brightness;
+            darkestIndex = i;
+          }
+        }
+
+        final int x = (darkestIndex ~/ 4) % _capturedImage!.width;
+        final int y = (darkestIndex ~/ 4) ~/ _capturedImage!.width;
+
+        // Set the bounding box around the darkest part.
+        const double boxSize = 50;
+        final double boxLeft = x - (boxSize / 2);
+        final double boxTop = y - (boxSize / 2);
         setState(() {
-          _detectionResult = "Platform error: ${e.message}";
+          _focusPoint = Rect.fromLTWH(boxLeft, boxTop, boxSize, boxSize);
+          _detectionResult = "Object detected";
         });
       } catch (e) {
-        debugPrint("Error during detection: $e");
-        setState(() {
-          _detectionResult = "Error: $e";
-        });
-      } finally {
-        _isDetecting = false;
+        debugPrint("Error taking picture: $e");
       }
     });
   }
 
-  /// Robust conversion from YUV420 (from camera) to NV21 format.
-  /// This function takes into account the row stride and pixel stride.
-  Uint8List convertYUV420toNV21(CameraImage image) {
-    final int width = image.width;
-    final int height = image.height;
-    final int ySize = width * height;
-
-    // Calculate size based on UV planes (assuming both have the same dimensions)
-    // The U and V planes are subsampled 2x so their width is width/2 and height is height/2.
-    final int uvWidth = width ~/ 2;
-    final int uvHeight = height ~/ 2;
-    final int uvSize =
-        uvWidth * uvHeight; // expected number of U (or V) samples
-
-    // Allocate buffer for NV21: Y plane + interleaved VU plane (2 bytes per UV pixel)
-    final Uint8List nv21 = Uint8List(ySize + 2 * uvSize);
-
-    // 1. Copy the Y plane.
-    final Uint8List yBuffer = image.planes[0].bytes;
-    nv21.setRange(0, ySize, yBuffer);
-
-    // 2. Interleave the UV data.
-    final planeU = image.planes[1];
-    final planeV = image.planes[2];
-
-    // Use actual row and pixel stride from the U and V planes.
-    final int rowStrideU = planeU.bytesPerRow;
-    final int pixelStrideU = planeU.bytesPerPixel ?? 1;
-    final int rowStrideV = planeV.bytesPerRow;
-    final int pixelStrideV = planeV.bytesPerPixel ?? 1;
-
-    int uvIndex = ySize;
-    // Iterate over each row of the subsampled UV data.
-    for (int row = 0; row < uvHeight; row++) {
-      int offsetU = row * rowStrideU;
-      int offsetV = row * rowStrideV;
-      for (int col = 0; col < uvWidth; col++) {
-        // For NV21, the expected order is V then U.
-        nv21[uvIndex++] = planeU.bytes[offsetU + col * pixelStrideU];
-        nv21[uvIndex++] = planeV.bytes[offsetV + col * pixelStrideV];
-      }
-    }
-
-    debugPrint(
-        "Converted NV21 length: ${nv21.length} (expected: ${ySize + 2 * uvSize})");
-    return nv21;
+  void _stopTakingPictures() {
+    _timer?.cancel();
+    setState(() {
+      _detectionResult = "Detection stopped";
+    });
   }
 
   @override
   void dispose() {
     _cameraController.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_cameraController.value.isInitialized) {
+    if (!_isCameraInitialized) {
       return const Center(child: CircularProgressIndicator());
     }
     return Scaffold(
@@ -155,20 +124,119 @@ class _DetectionWidgetState extends State<DetectionWidget> {
       body: Stack(
         children: [
           CameraPreview(_cameraController),
+          if (_capturedImage != null)
+            CustomPaint(
+              painter: ObjectPainter(_capturedImage!, _focusPoint),
+              child: Container(),
+            ),
           Align(
             alignment: Alignment.bottomCenter,
-            child: Container(
-              color: Colors.black54,
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                _detectionResult,
-                style: const TextStyle(color: Colors.white),
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  color: Colors.black54,
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    _detectionResult,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _startTakingPictures,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            Colors.blue, // Set the background color
+                        foregroundColor: Colors.white, // Set the text color
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(20), // Rounded corners
+                        ),
+                        elevation: 5, // Add shadow for depth
+                      ),
+                      child: const Text(
+                        "Start",
+                        style: TextStyle(
+                          fontSize: 18, // Set the font size
+                          fontWeight: FontWeight.bold, // Make the text bold
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    ElevatedButton(
+                      onPressed: _stopTakingPictures,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        elevation: 5,
+                      ),
+                      child: const Text(
+                        "Stop",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+class ObjectPainter extends CustomPainter {
+  final ui.Image image;
+  final Rect objectBoundingBox;
+
+  ObjectPainter(this.image, this.objectBoundingBox);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    canvas.drawImage(image, Offset.zero, paint);
+
+    // Draw a bounding box for the detected object.
+    final rectPaint = Paint()
+      ..color = const Color(0xFFFF0000)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.0;
+    canvas.drawRect(objectBoundingBox, rectPaint);
+
+    // Add a label for the detected object.
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: "Object",
+        style: TextStyle(
+          color: Colors.red,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    textPainter.paint(
+        canvas, Offset(objectBoundingBox.left, objectBoundingBox.top - 20));
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) {
+    return true;
   }
 }
