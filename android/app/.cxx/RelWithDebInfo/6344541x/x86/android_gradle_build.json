@@ -1,0 +1,28 @@
+{
+  "buildFiles": [
+    "D:\\flutterDev\\flutter_windows_3.24.5-stable\\flutter\\packages\\flutter_tools\\gradle\\src\\main\\groovy\\CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "D:\\flutterDev\\commandlinetools-win-11076708_latest\\cmdline-tools\\cmake\\3.22.1\\bin\\ninja.exe",
+      "-C",
+      "C:\\Users\\ANKIT ANAND\\Desktop\\Dev Projects\\flickit\\flutter_object_detection\\android\\app\\.cxx\\RelWithDebInfo\\6344541x\\x86",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "D:\\flutterDev\\commandlinetools-win-11076708_latest\\cmdline-tools\\cmake\\3.22.1\\bin\\ninja.exe",
+    "-C",
+    "C:\\Users\\ANKIT ANAND\\Desktop\\Dev Projects\\flickit\\flutter_object_detection\\android\\app\\.cxx\\RelWithDebInfo\\6344541x\\x86",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {},
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "D:\\flutterDev\\commandlinetools-win-11076708_latest\\cmdline-tools\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe",
+      "cppCompilerExecutable": "D:\\flutterDev\\commandlinetools-win-11076708_latest\\cmdline-tools\\ndk\\25.1.8937393\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe"
+    }
+  },
+  "cFileExtensions": [],
+  "cppFileExtensions": []
+}

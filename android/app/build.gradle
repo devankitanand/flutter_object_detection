@@ -1,0 +1,48 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id 'dev.flutter.flutter-gradle-plugin'
+}
+
+android {
+    // New: specify your module’s namespace.
+    namespace "com.example.flutter_object_detection"
+
+    compileSdk 35
+    ndkVersion "25.1.8937393"
+    defaultConfig {
+        applicationId "com.example.flutter_object_detection"
+        minSdk 21
+        targetSdk 33
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            // Disable code minification and resource shrinking.
+        minifyEnabled false
+        shrinkResources false
+        signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+flutter {
+    source '../..'
+}
+
+dependencies {
+    // Add any dependencies you need here. For ML Kit:
+    implementation 'com.google.mlkit:object-detection:16.0.0'
+}

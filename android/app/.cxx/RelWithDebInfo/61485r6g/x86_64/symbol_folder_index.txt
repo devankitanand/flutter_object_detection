@@ -1,0 +1,1 @@
+C:\Users\ANKIT ANAND\Desktop\Dev Projects\flickit\flutter_object_detection\build\app\intermediates\cxx\RelWithDebInfo\61485r6g\obj\x86_64
