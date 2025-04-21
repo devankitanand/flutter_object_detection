@@ -46,7 +46,7 @@ class _DetectionWidgetState extends State<DetectionWidget> {
   }
 
   void _startTakingPictures() async {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
       if (!mounted || !_isCameraInitialized) {
         timer.cancel();
         return;
